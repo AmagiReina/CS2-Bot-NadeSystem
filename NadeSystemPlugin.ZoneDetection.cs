@@ -30,13 +30,15 @@ public partial class NadeSystemPlugin : BasePlugin
     // * Detects bots entering configured grenade trigger zones
     private void CheckBotZones()
     {
-        var rules = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").FirstOrDefault();
-        if (rules?.GameRules?.FreezePeriod == true) return;
+        if (_botNadesMode == "off") return;
         // Don't throw nades if the round is over
         if (_roundOver) return;
 
         var mapNades = _mapNades;
         if (mapNades.Count == 0) return;
+
+        var rules = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").FirstOrDefault();
+        if (rules?.GameRules?.FreezePeriod == true) return;
 
         // Materialize the controller list once per scan; every sub-check below
         // reuses it instead of re-walking the entity table.

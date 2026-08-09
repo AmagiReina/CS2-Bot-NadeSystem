@@ -202,6 +202,11 @@ public partial class NadeSystemPlugin : BasePlugin
     private void OnTick()
     {
         _tick++;
+        if (_botNadesMode == "off")
+        {
+            if (_tick % 256 == 0) PruneCooldowns();
+            return;
+        }
         if (_tick % 4   == 0) CheckBotZones();
         if (_tick % 256 == 0) PruneCooldowns();
     }
