@@ -27,11 +27,11 @@ public partial class NadeSystemPlugin : BasePlugin
 
     // * Runs situational checks before attempting a replay
     private void TryConditionalReplay(CCSPlayerController bot, GrenadeData g,
-        List<CCSPlayerController> allControllers)
+        List<CCSPlayerController> allControllers, FlashTargetEvaluation? flashEvaluation = null)
     {
         var pawn = bot.PlayerPawn?.Value;
         if (pawn == null || !pawn.IsValid) return;
-        if (!PassesSituationalCheck(bot, pawn, g, g.GrenadeType, allControllers))
+        if (!PassesSituationalCheck(bot, pawn, g, g.GrenadeType, allControllers, flashEvaluation))
         {
             // Probability attempt cooldown
             if (g.GrenadeType.Equals("smoke", StringComparison.OrdinalIgnoreCase))
@@ -47,7 +47,7 @@ public partial class NadeSystemPlugin : BasePlugin
     // * Evaluates combat, information, probability, and mode-specific rules
     private bool PassesSituationalCheck(
         CCSPlayerController bot, CCSPlayerPawn pawn, GrenadeData g, string gtype,
-        List<CCSPlayerController> allControllers)
+        List<CCSPlayerController> allControllers, FlashTargetEvaluation? flashEvaluation)
     {
         //  He / Molotov decision
         if (gtype is "he" or "molotov")
@@ -113,7 +113,8 @@ public partial class NadeSystemPlugin : BasePlugin
             if (!PassesTeamAndScheduleCheck(bot, g)) return false;
 
             // Collect enemies that can actually be blinded by this flash.
-            var blindableEnemies = CanBlindAnyEnemy(bot, g, allControllers);
+            var blindableEnemies = flashEvaluation?.BlindableEnemies
+                ?? EvaluateFlashTargets(bot, g, allControllers).BlindableEnemies;
             if (blindableEnemies.Count == 0) return false;
 
             // Information gate (less / normal / more mode): if no blindable enemy has info on this bot,
@@ -234,18 +235,20 @@ public partial class NadeSystemPlugin : BasePlugin
         return true;
     }
 
-    // Returns all enemies that can be blinded by this flash (FOV + LoS).
-    // * Finds enemies that can be blinded from a landing position
-    private List<CCSPlayerController> CanBlindAnyEnemy(CCSPlayerController bot, GrenadeData g,
+    // * Evaluates living and blindable enemies once for a flash decision
+    private FlashTargetEvaluation EvaluateFlashTargets(CCSPlayerController bot, GrenadeData g,
         List<CCSPlayerController> allControllers)
     {
-        var result = new List<CCSPlayerController>();
+        var blindableEnemies = new List<CCSPlayerController>();
+        int totalEnemies = 0;
         float lx = g.LandingPosition.X, ly = g.LandingPosition.Y, lz = g.LandingPosition.Z;
         foreach (var p in allControllers)
         {
             if (!p.IsValid || (int)p.TeamNum == bot.TeamNum) continue;
             var ep = GetActiveLivePawn(p);
-            if (ep?.AbsOrigin == null || ep.EyeAngles == null) continue;
+            if (ep == null) continue;
+            totalEnemies++;
+            if (ep.AbsOrigin == null || ep.EyeAngles == null) continue;
 
             float viewZ = 64f;
             float eyeX = ep.AbsOrigin.X, eyeY = ep.AbsOrigin.Y, eyeZ = ep.AbsOrigin.Z + viewZ;
@@ -271,49 +274,10 @@ public partial class NadeSystemPlugin : BasePlugin
             {
                 // Raytrace check
                 if (FlashHasLoS(g.LandingPosition, eyeX, eyeY, eyeZ))
-                    result.Add(p);
+                    blindableEnemies.Add(p);
             }
         }
-        return result;
-    }
-
-    // Returns (blindableCount, totalEnemyCount)
-    // * Counts blindable enemies and all living enemies
-    private (int blindable, int total) CountBlindableEnemies(CCSPlayerController bot, GrenadeData g,
-        List<CCSPlayerController> allControllers)
-    {
-        float lx = g.LandingPosition.X, ly = g.LandingPosition.Y, lz = g.LandingPosition.Z;
-        int blindable = 0, total = 0;
-        foreach (var p in allControllers)
-        {
-            if (!p.IsValid || (int)p.TeamNum == bot.TeamNum) continue;
-            var ep = GetActiveLivePawn(p);
-            if (ep == null) continue;
-            total++;
-            if (ep.AbsOrigin == null || ep.EyeAngles == null) continue;
-
-            float eyeX = ep.AbsOrigin.X, eyeY = ep.AbsOrigin.Y, eyeZ = ep.AbsOrigin.Z + 64f;
-            float dx = lx - eyeX, dy = ly - eyeY, dz = lz - eyeZ;
-            float dist2 = dx*dx + dy*dy + dz*dz;
-            if (dist2 > 1300f * 1300f) continue;
-
-            float eYawRad   =  ep.EyeAngles.Y * MathF.PI / 180f;
-            float ePitchRad = -ep.EyeAngles.X * MathF.PI / 180f;
-            float fwdX = MathF.Cos(ePitchRad) * MathF.Cos(eYawRad);
-            float fwdY = MathF.Cos(ePitchRad) * MathF.Sin(eYawRad);
-            float fwdZ = MathF.Sin(ePitchRad);
-
-            float yawToFlash   = MathF.Atan2(dy, dx);
-            float eyeYaw       = MathF.Atan2(fwdY, fwdX);
-            float deltaYaw     = MathF.Abs(MathF.Atan2(MathF.Sin(yawToFlash - eyeYaw),
-                                                        MathF.Cos(yawToFlash - eyeYaw)));
-            float pitchToFlash = MathF.Atan2(dz, MathF.Sqrt(dx*dx + dy*dy));
-            float eyePitch     = MathF.Atan2(fwdZ, MathF.Sqrt(fwdX*fwdX + fwdY*fwdY));
-            float deltaPitch   = MathF.Abs(pitchToFlash - eyePitch);
-            if (deltaYaw <= 0.927f && deltaPitch <= MathF.PI / 4f && FlashHasLoS(g.LandingPosition, eyeX, eyeY, eyeZ))
-                blindable++;
-        }
-        return (blindable, total);
+        return new FlashTargetEvaluation(blindableEnemies, totalEnemies);
     }
     // Returns true if LandingPosition has unobstructed LoS to the given eye point.
     // Uses MASK_WORLD_ONLY, ignores players/props.

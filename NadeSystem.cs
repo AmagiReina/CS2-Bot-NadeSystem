@@ -33,6 +33,9 @@ public partial class NadeSystemPlugin : BasePlugin
     private string DataDir => Path.Combine(ModuleDirectory, "grenades");
     // precache all the nades on this map
     private List<GrenadeData> _mapNades = new();
+    // Static trigger-zone index rebuilt whenever the active map data is loaded
+    private const float GrenadeZoneGridSize = 256f;
+    private Dictionary<(int X, int Y), List<GrenadeData>> _grenadeZoneGrid = new();
     private string _botNadesMode = "normal"; // "off" | "less" | "normal" | "more" | "max"
     // ── State ──────────────────────────────────────────────────
     private List<GrenadeData>     _db                = new();
@@ -83,6 +86,10 @@ public partial class NadeSystemPlugin : BasePlugin
         float Z,
         float RadiusSquared,
         float ExpiresAt);
+    // Shared result prevents duplicate flash target ray traces in one decision
+    private readonly record struct FlashTargetEvaluation(
+        List<CCSPlayerController> BlindableEnemies,
+        int TotalEnemies);
     // Current CS2 grenade throw events fade to silence at this distance
     private const float GrenadeThrowSoundRange = 1100f;
     // ── Static lookup tables ───────────────────────────────────

@@ -69,7 +69,41 @@ public partial class NadeSystemPlugin : BasePlugin
         _mapNades = _db
             .Where(g => string.Equals(g.MapName, Server.MapName, StringComparison.OrdinalIgnoreCase))
             .ToList();
+        BuildGrenadeZoneGrid();
         Server.PrintToConsole($"[NadeSystem] Loaded {loaded} grenades from {DataDir}");
+    }
+
+    // * Builds ordered grid buckets for every trigger zone overlapping each cell
+    private void BuildGrenadeZoneGrid()
+    {
+        _grenadeZoneGrid.Clear();
+        foreach (var grenade in _mapNades)
+        {
+            float radius = grenade.GrenadeType == "decoy" ? 200f : grenade.ZoneRadius;
+            var minCell = GetGrenadeZoneGridCell(grenade.ZoneX - radius, grenade.ZoneY - radius);
+            var maxCell = GetGrenadeZoneGridCell(grenade.ZoneX + radius, grenade.ZoneY + radius);
+
+            for (int cellX = minCell.X; cellX <= maxCell.X; cellX++)
+            {
+                for (int cellY = minCell.Y; cellY <= maxCell.Y; cellY++)
+                {
+                    var key = (cellX, cellY);
+                    if (!_grenadeZoneGrid.TryGetValue(key, out var bucket))
+                    {
+                        bucket = new List<GrenadeData>();
+                        _grenadeZoneGrid[key] = bucket;
+                    }
+                    bucket.Add(grenade);
+                }
+            }
+        }
+    }
+
+    // * Converts world coordinates to a stable grid key including negative coordinates
+    private static (int X, int Y) GetGrenadeZoneGridCell(float x, float y)
+    {
+        return ((int)MathF.Floor(x / GrenadeZoneGridSize),
+            (int)MathF.Floor(y / GrenadeZoneGridSize));
     }
 
 }
