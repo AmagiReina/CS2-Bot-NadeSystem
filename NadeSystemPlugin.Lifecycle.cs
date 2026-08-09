@@ -41,10 +41,7 @@ public partial class NadeSystemPlugin : BasePlugin
         RegisterEventHandler<EventPlayerHurt>(OnPlayerHurt);
         RegisterEventHandler<EventPlayerBlind>(OnPlayerBlind);
         RegisterEventHandler<EventWeaponFire>(OnWeaponFire);
-        RegisterEventHandler<EventWeaponReload>(OnWeaponReload);
-        RegisterEventHandler<EventWeaponZoom>(OnWeaponZoom);
-        RegisterEventHandler<EventGrenadeThrown>(OnGrenadeThrown);
-        RegisterEventHandler<EventPlayerJump>(OnPlayerJump);
+        RegisterEventHandler<EventPlayerSound>(OnPlayerSound);
         RegisterListener<Listeners.OnMapStart>(_ =>
         {
             _db.Clear();
@@ -82,7 +79,7 @@ public partial class NadeSystemPlugin : BasePlugin
         _molotovEscapeSmokeCooldown.Clear();
         _retaliationCooldown.Clear();
         // Information System
-        _soundPoints.Clear();
+        _playerSounds.Clear();
         _botLastFireTime.Clear();
         foreach (var key in _probFailCooldown.Where(kv => kv.Value <= Server.CurrentTime).Select(kv => kv.Key).ToList())
             _probFailCooldown.Remove(key);
@@ -115,13 +112,13 @@ public partial class NadeSystemPlugin : BasePlugin
         return HookResult.Continue;
     }
 
-    // A dead player makes no more sound, so drop their trail immediately
+    // A dead player makes no more sound, so drop their event state immediately
     // * Removes sound information retained for a dead player
     private HookResult OnPlayerDeath(EventPlayerDeath @event, GameEventInfo info)
     {
         var player = @event.Userid;
         if (player != null && player.IsValid)
-            _soundPoints.Remove((uint)player.Index);
+            _playerSounds.Remove((uint)player.Index);
         return HookResult.Continue;
     }
 
@@ -205,7 +202,6 @@ public partial class NadeSystemPlugin : BasePlugin
     private void OnTick()
     {
         _tick++;
-        UpdateSoundTrails(_tick % 4 == 0);
         if (_tick % 4   == 0) CheckBotZones();
         if (_tick % 256 == 0) PruneCooldowns();
     }

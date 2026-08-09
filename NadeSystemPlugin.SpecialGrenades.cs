@@ -117,8 +117,6 @@ public partial class NadeSystemPlugin : BasePlugin
     // * Triggers defensive smoke or flash support during a defuse
     private HookResult OnBombBeginDefuse(EventBombBegindefuse @event, GameEventInfo info)
     {
-        RecordSoundPoint(@event.Userid);
-
         var bot = @event.Userid;
         if (bot == null || !bot.IsValid || !bot.IsBot) return HookResult.Continue;
         if (bot.HasBeenControlledByPlayerThisRound) return HookResult.Continue;
@@ -168,8 +166,6 @@ public partial class NadeSystemPlugin : BasePlugin
     // * Triggers smoke support when a bot starts planting
     private HookResult OnBombBeginPlant(EventBombBeginplant @event, GameEventInfo info)
     {
-        RecordSoundPoint(@event.Userid);
-
         if (_plantSmokeUsed) return HookResult.Continue;
 
         var bot = @event.Userid;
