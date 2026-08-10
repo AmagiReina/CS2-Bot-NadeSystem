@@ -48,6 +48,7 @@ public partial class NadeSystemPlugin : BasePlugin
         if (money.Account < cost) return;
 
         uint botIdx  = (uint)bot.Index;
+        if (!HasLockedNadeMoney(botIdx, cost)) return;
         bool isPoor   = _poorBots.Contains((uint)bot.Index);
         int  spendCap = GetRoundSpendCap(isCT, isPoor);
         if (!_roundSpendPerBot.TryGetValue(botIdx, out int alreadySpent))
@@ -60,6 +61,7 @@ public partial class NadeSystemPlugin : BasePlugin
             Utilities.SetStateChanged(bot, "CCSPlayerController", "m_pInGameMoneyServices");
             _roundSpendPerBot[botIdx] = alreadySpent + cost;
         }
+        SpendLockedNadeMoney(botIdx, cost);
 
         var vel = velocity ?? new Vector(0f, 0f, 0f);
         Server.NextFrame(() =>
@@ -335,6 +337,7 @@ public partial class NadeSystemPlugin : BasePlugin
 
             if (!costTable.TryGetValue(gt, out int cost)) continue;
             if (money.Account < cost) continue;
+            if (!HasLockedNadeMoney(botIdx, cost)) continue;
             // Less mode: enforce per-bot round limits (counts retaliation nades).
             if (_botNadesMode == "less" && !LessModeAllows(gt, botIdx)) continue;
 
@@ -346,6 +349,7 @@ public partial class NadeSystemPlugin : BasePlugin
                 Utilities.SetStateChanged(victim, "CCSPlayerController", "m_pInGameMoneyServices");
                 _roundSpendPerBot[botIdx] = alreadySpent + cost;
             }
+            SpendLockedNadeMoney(botIdx, cost);
 
             RegisterCooldown(g.Id, gt);
             SpawnProjectile(victim, g);

@@ -26,7 +26,7 @@ namespace NadeSystem;
 public partial class NadeSystemPlugin : BasePlugin
 {
     public override string ModuleName    => "NadeSystem";
-    public override string ModuleVersion => "1.2.0";
+    public override string ModuleVersion => "1.2.1";
     public override string ModuleAuthor  => "ed0ard & XBribo";
 
     // grenades folder lives inside the plugin directory
@@ -46,6 +46,7 @@ public partial class NadeSystemPlugin : BasePlugin
     private bool                  _roundOver         = false;
     private float                 _freezeEndTime     = 0f;
     private Dictionary<uint, int> _roundSpendPerBot  = new();
+    private Dictionary<uint, int> _roundNadeMoneyPerBot = new();
     private HashSet<uint>         _poorBots          = new();
     // Information System
     private Dictionary<string, float> _probFailCooldown = new();

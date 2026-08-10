@@ -49,6 +49,7 @@ public partial class NadeSystemPlugin : BasePlugin
             _cooldowns.Clear();
             _roundCountByTeam.Clear();
             _replayBots.Clear();
+            _roundNadeMoneyPerBot.Clear();
         });
         
         AddCommand("bot_nades", "Control bots' nade throw mode (off/less/normal/more/max)", CmdBotNades);
@@ -68,6 +69,7 @@ public partial class NadeSystemPlugin : BasePlugin
         _replayBots.Clear();
         _smokeCooldownBots.Clear();
         _roundSpendPerBot.Clear();
+        _roundNadeMoneyPerBot.Clear();
         _defuseSmokeUsed  = false;
         _defuseFlashUsed  = false;
         _plantSmokeUsed   = false;
@@ -102,7 +104,27 @@ public partial class NadeSystemPlugin : BasePlugin
     private HookResult OnFreezeEnd(EventRoundFreezeEnd @event, GameEventInfo info)
     {
         _freezeEndTime = Server.CurrentTime;
+        _roundNadeMoneyPerBot.Clear();
+        foreach (var bot in Utilities.FindAllEntitiesByDesignerName<CCSPlayerController>("cs_player_controller"))
+        {
+            if (!bot.IsValid || !bot.IsBot) continue;
+            var money = bot.InGameMoneyServices;
+            if (money == null) continue;
+            _roundNadeMoneyPerBot[(uint)bot.Index] = Math.Max(0, money.Account);
+        }
         return HookResult.Continue;
+    }
+
+    // * Checks whether a bot still has enough freeze-end money for a grenade
+    private bool HasLockedNadeMoney(uint botIdx, int cost)
+        => _roundNadeMoneyPerBot.TryGetValue(botIdx, out int availableMoney)
+            && availableMoney >= cost;
+
+    // * Charges a grenade against the bot's freeze-end money allowance
+    private void SpendLockedNadeMoney(uint botIdx, int cost)
+    {
+        if (!_roundNadeMoneyPerBot.TryGetValue(botIdx, out int availableMoney)) return;
+        _roundNadeMoneyPerBot[botIdx] = Math.Max(0, availableMoney - cost);
     }
 
     // * Stops grenade processing after the round ends
