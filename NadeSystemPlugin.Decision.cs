@@ -15,7 +15,6 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RayTraceAPI;
 
 namespace NadeSystem;
 
@@ -280,24 +279,17 @@ public partial class NadeSystemPlugin : BasePlugin
         return new FlashTargetEvaluation(blindableEnemies, totalEnemies);
     }
     // Returns true if LandingPosition has unobstructed LoS to the given eye point.
-    // Uses MASK_WORLD_ONLY, ignores players/props.
+    // Uses Masks.SolidBrushOnly, ignores players/props
     // * Checks world-only line of sight from a flash to an eye position
     private bool FlashHasLoS(Vec3 landing, float eyeX, float eyeY, float eyeZ)
     {
         try
         {
-            var rt = _rayTraceCapability.Get();
-            if (rt == null) // If raytrace interface is not loaded, return true
-            {
-                Server.PrintToConsole("[NadeSystem] FlashHasLoS: RayTrace not loaded, skipping");
-                return true;
-            }
-
             var start = new Vector(landing.X, landing.Y, landing.Z);
             var end   = new Vector(eyeX, eyeY, eyeZ);
 
-            var opts = new TraceOptions(InteractionLayers.MASK_WORLD_ONLY);
-            rt.TraceEndShape(start, end, null, opts, out TraceResult res);
+            var opts = new TraceOptions { InteractsWith = Masks.SolidBrushOnly };
+            var res = Trace.TraceEndShape(start, end, options: opts);
 
             // fraction >= 0.99 → enemy can see the flash
             return res.Fraction >= 0.99f;

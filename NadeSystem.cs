@@ -15,7 +15,6 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RayTraceAPI;
 
 namespace NadeSystem;
 
@@ -52,9 +51,6 @@ public partial class NadeSystemPlugin : BasePlugin
     private Dictionary<string, float> _probFailCooldown = new();
     // flash immunity
     private Dictionary<uint, float> _botFlashImmunityUntil = new();
-    // Ray-Trace interface
-    private static readonly PluginCapability<CRayTraceInterface> _rayTraceCapability =
-        new("raytrace:craytraceinterface");
     // Special Nades
     private bool _defuseSmokeUsed    = false;
     private bool _defuseFlashUsed    = false;
