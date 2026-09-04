@@ -15,7 +15,6 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RayTraceAPI;
 
 namespace NadeSystem;
 
@@ -26,13 +25,16 @@ namespace NadeSystem;
 public partial class NadeSystemPlugin : BasePlugin
 {
     public override string ModuleName    => "NadeSystem";
-    public override string ModuleVersion => "1.1.8";
+    public override string ModuleVersion => "1.2.1";
     public override string ModuleAuthor  => "ed0ard & XBribo";
 
     // grenades folder lives inside the plugin directory
     private string DataDir => Path.Combine(ModuleDirectory, "grenades");
     // precache all the nades on this map
     private List<GrenadeData> _mapNades = new();
+    // Static trigger-zone index rebuilt whenever the active map data is loaded
+    private const float GrenadeZoneGridSize = 256f;
+    private Dictionary<(int X, int Y), List<GrenadeData>> _grenadeZoneGrid = new();
     private string _botNadesMode = "normal"; // "off" | "less" | "normal" | "more" | "max"
     // ── State ──────────────────────────────────────────────────
     private List<GrenadeData>     _db                = new();
@@ -43,14 +45,12 @@ public partial class NadeSystemPlugin : BasePlugin
     private bool                  _roundOver         = false;
     private float                 _freezeEndTime     = 0f;
     private Dictionary<uint, int> _roundSpendPerBot  = new();
+    private Dictionary<uint, int> _roundNadeMoneyPerBot = new();
     private HashSet<uint>         _poorBots          = new();
     // Information System
     private Dictionary<string, float> _probFailCooldown = new();
     // flash immunity
     private Dictionary<uint, float> _botFlashImmunityUntil = new();
-    // Ray-Trace interface
-    private static readonly PluginCapability<CRayTraceInterface> _rayTraceCapability =
-        new("raytrace:craytraceinterface");
     // Special Nades
     private bool _defuseSmokeUsed    = false;
     private bool _defuseFlashUsed    = false;
@@ -71,21 +71,22 @@ public partial class NadeSystemPlugin : BasePlugin
     // Normal Mode: post-throw probability window for flash
     // key = botIndex, value = (windowExpiresAt, blindRatio)
     private Dictionary<uint, (float ExpiresAt, float Ratio)> _botFlashRatioWindow = new();
-    // ── Information system (sound trail + vision) ──────────────
-    // Plain value-type coordinate: avoids allocating a CSS Vector (managed wrapper
-    // + native memory) per recorded sound point.
-    private readonly record struct SoundPoint(float X, float Y, float Z);
-    // key = controller index, value = list of positions where this player made audible sound.
-    // Only points within 100f of the player's current position are kept each tick.
-    private Dictionary<uint, List<SoundPoint>> _soundPoints = new();
+    // ── Information system (sound events + vision) ─────────────
+    // key = controller index, value = latest Valve player_sound state
+    private Dictionary<uint, PlayerSoundState> _playerSounds = new();
     // key = controller index, value = last weapon_fire time (global, all players)
     private Dictionary<uint, float> _botLastFireTime = new();
-    // Sound trail capture radius (a recorded sound point counts as "info" within this range)
-    private const float SoundInfoRadius = 100f;
-    // Footstep speed threshold (horizontal velocity above this makes audible footstep sound)
-    private const float FootstepSpeedThreshold = 150f;
-    // Max distance at which a sound point can be heard by an enemy.
-    private const float SoundHearRadius = 1000f;
+    // Value-only state avoids retaining native Vector wrappers between callbacks
+    private readonly record struct PlayerSoundState(
+        float X,
+        float Y,
+        float Z,
+        float RadiusSquared,
+        float ExpiresAt);
+    // Shared result prevents duplicate flash target ray traces in one decision
+    private readonly record struct FlashTargetEvaluation(
+        List<CCSPlayerController> BlindableEnemies,
+        int TotalEnemies);
     // Current CS2 grenade throw events fade to silence at this distance
     private const float GrenadeThrowSoundRange = 1100f;
     // ── Static lookup tables ───────────────────────────────────

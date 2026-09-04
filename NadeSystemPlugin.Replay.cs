@@ -15,7 +15,6 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RayTraceAPI;
 
 namespace NadeSystem;
 
@@ -95,6 +94,7 @@ public partial class NadeSystemPlugin : BasePlugin
 
         // ── Round spend cap check ──────────────────────────────────────
         uint botIdx   = (uint)bot.Index;
+        if (!HasLockedNadeMoney(botIdx, cost)) return;
         bool isPoor   = _poorBots.Contains((uint)bot.Index);
         int  spendCap = GetRoundSpendCap(isCT, isPoor);
         if (!_roundSpendPerBot.TryGetValue(botIdx, out int alreadySpent))
@@ -109,6 +109,7 @@ public partial class NadeSystemPlugin : BasePlugin
             Utilities.SetStateChanged(bot, "CCSPlayerController", "m_pInGameMoneyServices");
             _roundSpendPerBot[botIdx] = alreadySpent + cost;
         }
+        SpendLockedNadeMoney(botIdx, cost);
 
         _replayBots.Add((uint)bot.Index);
         RegisterCooldown(g.Id, gtype);

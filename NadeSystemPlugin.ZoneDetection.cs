@@ -15,7 +15,6 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RayTraceAPI;
 
 namespace NadeSystem;
 
@@ -30,13 +29,15 @@ public partial class NadeSystemPlugin : BasePlugin
     // * Detects bots entering configured grenade trigger zones
     private void CheckBotZones()
     {
-        var rules = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").FirstOrDefault();
-        if (rules?.GameRules?.FreezePeriod == true) return;
+        if (_botNadesMode == "off") return;
         // Don't throw nades if the round is over
         if (_roundOver) return;
 
         var mapNades = _mapNades;
         if (mapNades.Count == 0) return;
+
+        var rules = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").FirstOrDefault();
+        if (rules?.GameRules?.FreezePeriod == true) return;
 
         // Materialize the controller list once per scan; every sub-check below
         // reuses it instead of re-walking the entity table.
@@ -63,7 +64,12 @@ public partial class NadeSystemPlugin : BasePlugin
             var pos = pawn.AbsOrigin;
             if (pos == null) continue;
 
-            foreach (var g in mapNades)
+            IReadOnlyList<GrenadeData> nearbyNades = _grenadeZoneGrid.TryGetValue(
+                GetGrenadeZoneGridCell(pos.X, pos.Y), out var indexedNades)
+                ? indexedNades
+                : Array.Empty<GrenadeData>();
+
+            foreach (var g in nearbyNades)
             {
                 var gtype = g.GrenadeType; // lowercase since LoadDb
                 float viewOffsetZ = 64f;
@@ -116,7 +122,8 @@ public partial class NadeSystemPlugin : BasePlugin
 
                 if (_botNadesMode == "max")
                 {
-                    if (gtype == "flash" && CanBlindAnyEnemy(bot, g, allControllers).Count == 0) continue;
+                    if (gtype == "flash"
+                        && EvaluateFlashTargets(bot, g, allControllers).BlindableEnemies.Count == 0) continue;
                     // No HE/molotov within 1s of this bot firing.
                     if (gtype is "he" or "molotov" && FiredRecently(bot, 1f)) continue;
                     if (gtype is "he" or "molotov")
@@ -178,12 +185,13 @@ public partial class NadeSystemPlugin : BasePlugin
                         }
                         // Passed — compute new ratio and reset window after TryConditionalReplay succeeds
                         // We pass ratio computation into TryConditionalReplay via a pre-check here
-                        var (blindable, total) = CountBlindableEnemies(bot, g, allControllers);
-                        float ratio = GetFlashRatioThreshold(blindable, total);
+                        var flashEvaluation = EvaluateFlashTargets(bot, g, allControllers);
+                        float ratio = GetFlashRatioThreshold(
+                            flashEvaluation.BlindableEnemies.Count, flashEvaluation.TotalEnemies);
                         if (ratio <= 0f) break; // 0% → never throw
                         _botFlashRatioWindow[bidx] = (Server.CurrentTime + 12f, ratio);
 
-                        TryConditionalReplay(bot, g, allControllers);
+                        TryConditionalReplay(bot, g, allControllers, flashEvaluation);
                         break;
                     }
 

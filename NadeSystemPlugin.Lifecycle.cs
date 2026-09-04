@@ -15,7 +15,6 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RayTraceAPI;
 
 namespace NadeSystem;
 
@@ -41,10 +40,7 @@ public partial class NadeSystemPlugin : BasePlugin
         RegisterEventHandler<EventPlayerHurt>(OnPlayerHurt);
         RegisterEventHandler<EventPlayerBlind>(OnPlayerBlind);
         RegisterEventHandler<EventWeaponFire>(OnWeaponFire);
-        RegisterEventHandler<EventWeaponReload>(OnWeaponReload);
-        RegisterEventHandler<EventWeaponZoom>(OnWeaponZoom);
-        RegisterEventHandler<EventGrenadeThrown>(OnGrenadeThrown);
-        RegisterEventHandler<EventPlayerJump>(OnPlayerJump);
+        RegisterEventHandler<EventPlayerSound>(OnPlayerSound);
         RegisterListener<Listeners.OnMapStart>(_ =>
         {
             _db.Clear();
@@ -52,6 +48,7 @@ public partial class NadeSystemPlugin : BasePlugin
             _cooldowns.Clear();
             _roundCountByTeam.Clear();
             _replayBots.Clear();
+            _roundNadeMoneyPerBot.Clear();
         });
         
         AddCommand("bot_nades", "Control bots' nade throw mode (off/less/normal/more/max)", CmdBotNades);
@@ -71,6 +68,7 @@ public partial class NadeSystemPlugin : BasePlugin
         _replayBots.Clear();
         _smokeCooldownBots.Clear();
         _roundSpendPerBot.Clear();
+        _roundNadeMoneyPerBot.Clear();
         _defuseSmokeUsed  = false;
         _defuseFlashUsed  = false;
         _plantSmokeUsed   = false;
@@ -82,7 +80,7 @@ public partial class NadeSystemPlugin : BasePlugin
         _molotovEscapeSmokeCooldown.Clear();
         _retaliationCooldown.Clear();
         // Information System
-        _soundPoints.Clear();
+        _playerSounds.Clear();
         _botLastFireTime.Clear();
         foreach (var key in _probFailCooldown.Where(kv => kv.Value <= Server.CurrentTime).Select(kv => kv.Key).ToList())
             _probFailCooldown.Remove(key);
@@ -105,7 +103,27 @@ public partial class NadeSystemPlugin : BasePlugin
     private HookResult OnFreezeEnd(EventRoundFreezeEnd @event, GameEventInfo info)
     {
         _freezeEndTime = Server.CurrentTime;
+        _roundNadeMoneyPerBot.Clear();
+        foreach (var bot in Utilities.FindAllEntitiesByDesignerName<CCSPlayerController>("cs_player_controller"))
+        {
+            if (!bot.IsValid || !bot.IsBot) continue;
+            var money = bot.InGameMoneyServices;
+            if (money == null) continue;
+            _roundNadeMoneyPerBot[(uint)bot.Index] = Math.Max(0, money.Account);
+        }
         return HookResult.Continue;
+    }
+
+    // * Checks whether a bot still has enough freeze-end money for a grenade
+    private bool HasLockedNadeMoney(uint botIdx, int cost)
+        => _roundNadeMoneyPerBot.TryGetValue(botIdx, out int availableMoney)
+            && availableMoney >= cost;
+
+    // * Charges a grenade against the bot's freeze-end money allowance
+    private void SpendLockedNadeMoney(uint botIdx, int cost)
+    {
+        if (!_roundNadeMoneyPerBot.TryGetValue(botIdx, out int availableMoney)) return;
+        _roundNadeMoneyPerBot[botIdx] = Math.Max(0, availableMoney - cost);
     }
 
     // * Stops grenade processing after the round ends
@@ -115,13 +133,13 @@ public partial class NadeSystemPlugin : BasePlugin
         return HookResult.Continue;
     }
 
-    // A dead player makes no more sound, so drop their trail immediately
+    // A dead player makes no more sound, so drop their event state immediately
     // * Removes sound information retained for a dead player
     private HookResult OnPlayerDeath(EventPlayerDeath @event, GameEventInfo info)
     {
         var player = @event.Userid;
         if (player != null && player.IsValid)
-            _soundPoints.Remove((uint)player.Index);
+            _playerSounds.Remove((uint)player.Index);
         return HookResult.Continue;
     }
 
@@ -205,7 +223,11 @@ public partial class NadeSystemPlugin : BasePlugin
     private void OnTick()
     {
         _tick++;
-        UpdateSoundTrails(_tick % 4 == 0);
+        if (_botNadesMode == "off")
+        {
+            if (_tick % 256 == 0) PruneCooldowns();
+            return;
+        }
         if (_tick % 4   == 0) CheckBotZones();
         if (_tick % 256 == 0) PruneCooldowns();
     }

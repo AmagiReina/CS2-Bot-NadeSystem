@@ -9,156 +9,75 @@ using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.UserMessages;
 using CounterStrikeSharp.API.Modules.Utils;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RayTraceAPI;
 
 namespace NadeSystem;
 
 public partial class NadeSystemPlugin : BasePlugin
 {
     // ═══════════════════════════════════════════════════════════
-    //  Information system: sound trail + vision
-    //  Updated every tick for ALL players
+    //  Information system: sound events + vision
     // ═══════════════════════════════════════════════════════════
-    // Record a sound point at the player's current origin.
-    // * Records an audible position for a player when an enemy can hear it
-    private void RecordSoundPoint(CCSPlayerController? player, List<CCSPlayerController>? allPlayers = null)
+
+    // * Records Valve's latest audible state for a player
+    private HookResult OnPlayerSound(EventPlayerSound @event, GameEventInfo info)
     {
-        if (player == null) return;
+        if (_botNadesMode == "off") return HookResult.Continue;
+
+        var player = @event.Userid;
+        if (player == null || !player.IsValid || @event.Radius <= 0 || @event.Duration <= 0f)
+            return HookResult.Continue;
+
         var origin = GetActiveLivePawn(player)?.AbsOrigin;
-        if (origin == null) return;
+        if (origin == null) return HookResult.Continue;
 
-        // Only keep this sound point if at least one enemy is close enough to hear it.
-        float ox = origin.X, oy = origin.Y, oz = origin.Z;
-        float r2 = SoundHearRadius * SoundHearRadius;
-        var candidates = allPlayers
-            ?? Utilities.FindAllEntitiesByDesignerName<CCSPlayerController>("cs_player_controller").ToList();
-        bool audibleToEnemy = candidates
-            .Any(e =>
-            {
-                if (!e.IsValid || (int)e.TeamNum == player.TeamNum) return false;
-                var ep = GetActiveLivePawn(e)?.AbsOrigin;
-                if (ep == null) return false;
-                float dx = ep.X - ox, dy = ep.Y - oy, dz = ep.Z - oz;
-                return dx*dx + dy*dy + dz*dz <= r2;
-            });
-        if (!audibleToEnemy) return;
-
-        uint idx = (uint)player.Index;
-        if (!_soundPoints.TryGetValue(idx, out var list))
-        {
-            list = new List<SoundPoint>();
-            _soundPoints[idx] = list;
-        }
-        // Dedup: skip if within 1u of the last point. Repeated sound made in place
-        if (list.Count > 0)
-        {
-            var last = list[^1];
-            float ddx = ox - last.X, ddy = oy - last.Y, ddz = oz - last.Z;
-            if (ddx * ddx + ddy * ddy + ddz * ddz < 1f) return;
-        }
-        list.Add(new SoundPoint(ox, oy, oz));
+        float radius = @event.Radius;
+        _playerSounds[(uint)player.Index] = new PlayerSoundState(
+            origin.X,
+            origin.Y,
+            origin.Z,
+            radius * radius,
+            Server.CurrentTime + @event.Duration);
+        return HookResult.Continue;
     }
 
-    // * Records weapon fire as sound and recent combat information
+    // * Records recent weapon fire for combat checks
     private HookResult OnWeaponFire(EventWeaponFire @event, GameEventInfo info)
     {
+        if (_botNadesMode == "off") return HookResult.Continue;
+
         var p = @event.Userid;
         if (p != null && p.IsValid)
             _botLastFireTime[(uint)p.Index] = Server.CurrentTime;
-        RecordSoundPoint(p);
         return HookResult.Continue;
     }
 
-    // * Records weapon reload sound information
-    private HookResult OnWeaponReload(EventWeaponReload @event, GameEventInfo info)
+    // * Checks whether a listener is inside a player's active sound radius
+    private bool PlayerMadeAudibleSound(
+        CCSPlayerController player,
+        CCSPlayerController listener)
     {
-        RecordSoundPoint(@event.Userid);
-        return HookResult.Continue;
-    }
+        if (!player.IsValid || !listener.IsValid) return false;
 
-    // * Records weapon zoom sound information
-    private HookResult OnWeaponZoom(EventWeaponZoom @event, GameEventInfo info)
-    {
-        RecordSoundPoint(@event.Userid);
-        return HookResult.Continue;
-    }
-
-    // * Records native grenade throws as sound information
-    private HookResult OnGrenadeThrown(EventGrenadeThrown @event, GameEventInfo info)
-    {
-        RecordSoundPoint(@event.Userid);
-        return HookResult.Continue;
-    }
-
-    // * Records player jumps as sound information
-    private HookResult OnPlayerJump(EventPlayerJump @event, GameEventInfo info)
-    {
-        RecordSoundPoint(@event.Userid);
-        return HookResult.Continue;
-    }
-
-    // Per-tick maintenance of every player's sound trail.
-    // Delete sound points that are now farther than SoundInfoRadius from the player.
-    // Add a fresh point if the player is currently making footstep sound (speed > threshold).
-    // Pruning + dead-player cleanup run every call; footstep recording is throttled by the caller to every 4 ticks.
-    // * Prunes sound trails and optionally records current footsteps
-    private void UpdateSoundTrails(bool recordFootsteps)
-    {
-        var allPlayers = Utilities.FindAllEntitiesByDesignerName<CCSPlayerController>("cs_player_controller").ToList();
-        foreach (var p in allPlayers)
+        uint index = (uint)player.Index;
+        if (!_playerSounds.TryGetValue(index, out var sound)) return false;
+        if (Server.CurrentTime > sound.ExpiresAt)
         {
-            if (!p.IsValid) continue;
-            uint idx = (uint)p.Index;
-
-            var pawn = GetActiveLivePawn(p);
-            if (pawn == null)
-            {
-                _soundPoints.Remove(idx);
-                continue;
-            }
-            var origin = pawn.AbsOrigin;
-            if (origin == null) continue;
-
-            float cx = origin.X, cy = origin.Y, cz = origin.Z;
-
-            // Delete all kinds of sound points outside the info radius (keep only what is "near here").
-            if (_soundPoints.TryGetValue(idx, out var list) && list.Count > 0)
-            {
-                float r2 = SoundInfoRadius * SoundInfoRadius;
-                list.RemoveAll(pt =>
-                {
-                    float dx = pt.X - cx, dy = pt.Y - cy, dz = pt.Z - cz;
-                    return dx * dx + dy * dy + dz * dz > r2;
-                });
-            }
-
-            // Footstep sound: horizontal speed above threshold.
-            if (recordFootsteps)
-            {
-                var vel = pawn.AbsVelocity;
-                if (vel != null)
-                {
-                    float speed2 = vel.X * vel.X + vel.Y * vel.Y;
-                    if (speed2 > FootstepSpeedThreshold * FootstepSpeedThreshold)
-                        RecordSoundPoint(p, allPlayers);
-                }
-            }
+            _playerSounds.Remove(index);
+            return false;
         }
-    }
 
-    // True if this player currently has any retained sound point near them
-    // (Made audible sound here, now or while passing within SoundInfoRadius).
-    // * Checks whether a player has retained audible information
-    private bool PlayerMadeAudibleSound(CCSPlayerController player)
-    {
-        if (!player.IsValid) return false;
-        return _soundPoints.TryGetValue((uint)player.Index, out var list) && list.Count > 0;
+        var listenerOrigin = GetActiveLivePawn(listener)?.AbsOrigin;
+        if (listenerOrigin == null) return false;
+
+        float dx = listenerOrigin.X - sound.X;
+        float dy = listenerOrigin.Y - sound.Y;
+        float dz = listenerOrigin.Z - sound.Z;
+        return dx * dx + dy * dy + dz * dz <= sound.RadiusSquared;
     }
 
     // True if the given enemy currently sees the target via the official spotting system.
@@ -234,7 +153,7 @@ public partial class NadeSystemPlugin : BasePlugin
     // * Combines sound and vision into an enemy information check
     private bool HasInformationOn(CCSPlayerController enemy, CCSPlayerController target)
     {
-        if (PlayerMadeAudibleSound(target)) return true;
+        if (PlayerMadeAudibleSound(target, enemy)) return true;
         if (EnemySeesTarget(enemy, target)) return true;
         return false;
     }
