@@ -351,8 +351,7 @@ public partial class NadeSystemPlugin : BasePlugin
     // HE, smoke, and molotov rely on internal state that
     // only the native Create() function establishes.
     //
-    // IDA SigMaker 1.6.0; operands are wildcarded for relocations and stack-frame-dependent values.
-    // Signatures validated against the 2026-09-23 Linux and Windows server binaries.
+    // Signatures working on Linux + Windows as of CS2 build examined.
     // These may need re-finding after CS2 updates.
 
     // CSmokeGrenadeProjectile::Create(pos, ang, vel, vel, owner, itemDef, team)
